@@ -18,9 +18,7 @@ export interface Video {
   educationalValue?: string;
   description?: string;
   skills?: SkillCategory[]; // Habilidades que o vídeo desenvolve
-  lastWatchedPosition?: number; // Posição em segundos onde o vídeo foi pausado
-  lastWatchedDate?: string; // Data em que o vídeo foi pausado (YYYY-MM-DD)
-  endAt?: number;
+  endAt?: number; // Fim do vídeo (pode ser sobrescrito por blocos)
 }
 
 export interface VideoFolder {
@@ -32,15 +30,16 @@ export interface VideoFolder {
   icon?: string;
 }
 
+/**
+ * @deprecated Não é mais usado no sistema de programação ao vivo
+ * Mantido para compatibilidade com código legado
+ */
 export interface PlaylistItem {
   video: Video;
   reason: string;
-  startAt?: number;   // início do bloco
-  endAt?: number;     // fim do bloco (corte do segmento)
+  startAt?: number;
+  endAt?: number;
 }
-
-
-
 
 export interface AppSettings {
   dailyScreenTimeLimit: number; // em minutos (padrão: 60)
@@ -50,10 +49,9 @@ export interface AppSettings {
   enabledParentalControls: boolean; // Se os controles parentais estão ativados
   allowVideoResumption: boolean; // Permitir que vídeos longos sejam retomados de onde pararam
   interruptLongVideos: boolean; // Interromper vídeos que excedem a duração máxima da sessão
-  // NOVOS
-  maxContinuousPerShowMinutes: number;     // ex.: 20 min por desenho no mesmo dia
-  interstitialEveryMinutes: number;       // ex.: 8–10 (opcional, caso queira)
-  interstitialDurationSeconds: number;    // ex.: 60–90 (opcional)
+  maxContinuousPerShowMinutes: number; // ex.: 20 min por desenho no mesmo dia
+  interstitialEveryMinutes: number; // ex.: 8–10 (opcional)
+  interstitialDurationSeconds: number; // ex.: 60–90 (opcional)
 }
 
 export interface DailyUsageStats {
