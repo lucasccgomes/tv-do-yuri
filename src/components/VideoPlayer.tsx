@@ -6,12 +6,11 @@ import { motion } from 'framer-motion';
 interface VideoPlayerProps {
   video: Video | null;
   isPlaying: boolean;
-
-  onVideoEnd: () => void;          // chamado quando termina (natural) ou bate no segmentEndAt
-  initialTime: number;             // progresso inicial (segundos)
+  onVideoEnd: () => void;
+  initialTime: number;
   onProgress: (time: number) => void;
-  segmentStartAt?: number;         // início do recorte do vídeo (opcional)
-  segmentEndAt?: number;           // fim do recorte (ex.: 10 min)
+  segmentStartAt?: number;
+  segmentEndAt?: number;
   blocked?: boolean;
 }
 
@@ -23,73 +22,108 @@ export function VideoPlayer({
   onProgress,
   segmentStartAt,
   segmentEndAt,
-  blocked = false, // default
+  blocked = false,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
-  const [muted, setMuted] = useState(true); // autoplay-friendly
+  const [muted, setMuted] = useState(true);
   const [volume, setVolume] = useState(1);
-  const [userInteracted, setUserInteracted] = useState(false); // para habilitar som após gesto
+  const [userInteracted, setUserInteracted] = useState(false);
   const [ready, setReady] = useState(false);
-  const endFiredRef = useRef(false); // evitar disparos múltiplos
+  const endFiredRef = useRef(false);
+  const lastVideoIdRef = useRef<string | null>(null); // NOVO: rastreia mudança de vídeo
 
-  // Carrega source e posiciona no tempo inicial/segmento
+  // CORREÇÃO: Carrega source e posiciona no tempo inicial
   useEffect(() => {
-    endFiredRef.current = false;
     const el = videoRef.current;
-    if (!el || !video) return;
-
-    // carregar nova midia
-    el.src = video.url;
-    el.preload = 'metadata';
-    el.muted = true;          // necessário para autoplay
-    el.playsInline = true as any; // iOS inline
-    el.currentTime = Math.max(segmentStartAt ?? 0, initialTime ?? 0);
-
-    const onLoaded = async () => {
-      setReady(true);
-      // respeitar segmento
-      if (segmentStartAt && el.currentTime < segmentStartAt) {
-        el.currentTime = segmentStartAt;
-      }
-      if (isPlaying) {
-        try {
-          await el.play();
-        } catch {
-          // navegador bloqueou; aguardamos gesto do usuário
-        }
-      }
-    };
-
-    el.addEventListener('loadedmetadata', onLoaded);
-    return () => {
-      el.removeEventListener('loadedmetadata', onLoaded);
+    if (!el || !video) {
       setReady(false);
-    };
-  }, [video?.id, segmentStartAt]); // troca quando muda o vídeo/segmento
+      return;
+    }
+
+    // Detecta se é um vídeo novo
+    const isNewVideo = lastVideoIdRef.current !== video.id;
+    
+    if (isNewVideo) {
+      console.log('🎬 VideoPlayer: Carregando novo vídeo:', video.title, 'em', initialTime, 'segundos');
+      lastVideoIdRef.current = video.id;
+      endFiredRef.current = false;
+      setReady(false);
+
+      // Carrega nova mídia
+      el.src = video.url;
+      el.preload = 'metadata';
+      el.muted = true; // necessário para autoplay
+      el.playsInline = true as any;
+
+      const onLoaded = async () => {
+        console.log('📺 VideoPlayer: Metadata carregada, posicionando em', initialTime);
+        
+        // IMPORTANTE: Define o tempo inicial APÓS carregar metadata
+        const startTime = Math.max(segmentStartAt ?? 0, initialTime ?? 0);
+        el.currentTime = startTime;
+        
+        setReady(true);
+
+        // Tenta dar play automaticamente
+        if (isPlaying && !blocked) {
+          try {
+            await el.play();
+            console.log('▶️ VideoPlayer: Reprodução iniciada');
+          } catch (err) {
+            console.warn('⚠️ VideoPlayer: Autoplay bloqueado, aguardando interação do usuário');
+          }
+        }
+      };
+
+      const onError = (e: Event) => {
+        console.error('❌ VideoPlayer: Erro ao carregar vídeo:', e);
+      };
+
+      el.addEventListener('loadedmetadata', onLoaded);
+      el.addEventListener('error', onError);
+
+      return () => {
+        el.removeEventListener('loadedmetadata', onLoaded);
+        el.removeEventListener('error', onError);
+      };
+    } else {
+      // Mesmo vídeo, mas pode ter mudado o initialTime (ex: ao reabrir)
+      if (ready && Math.abs(el.currentTime - initialTime) > 2) {
+        console.log('⏩ VideoPlayer: Ajustando posição para', initialTime);
+        el.currentTime = initialTime;
+      }
+    }
+  }, [video?.id, video?.url, initialTime, segmentStartAt, isPlaying, blocked, ready]);
 
   // Controla play/pause externo
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !ready) return;
+    if (!el || !ready || blocked) return;
 
     (async () => {
       if (isPlaying) {
-        try {
-          await el.play();
-        } catch {
-          // provavelmente bloqueou por estar desmutado/sem gesto; mantemos muted até interação
+        if (el.paused) {
+          try {
+            await el.play();
+            console.log('▶️ VideoPlayer: Play externo');
+          } catch (err) {
+            console.warn('⚠️ VideoPlayer: Play bloqueado');
+          }
         }
       } else {
-        el.pause();
+        if (!el.paused) {
+          el.pause();
+          console.log('⏸️ VideoPlayer: Pause externo');
+        }
       }
     })();
-  }, [isPlaying, ready]);
+  }, [isPlaying, ready, blocked]);
 
   // Loop de progresso + corte por segmentEndAt
   useEffect(() => {
     const el = videoRef.current;
-    if (!el) return;
+    if (!el || !ready) return;
 
     const tick = () => {
       const t = el.currentTime || 0;
@@ -99,12 +133,12 @@ export function VideoPlayer({
       if (
         typeof segmentEndAt === 'number' &&
         segmentEndAt > 0 &&
-        t >= segmentEndAt - 0.25 && // margem
+        t >= segmentEndAt - 0.25 &&
         !endFiredRef.current
       ) {
         endFiredRef.current = true;
-        // pausa para evitar “vazamento” de áudio entre trocas
         el.pause();
+        console.log('📺 VideoPlayer: Fim do segmento atingido');
         onVideoEnd();
         return;
       }
@@ -116,9 +150,9 @@ export function VideoPlayer({
       if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     };
-  }, [segmentEndAt, onProgress, onVideoEnd]);
+  }, [ready, segmentEndAt, onProgress, onVideoEnd]);
 
-  // Avançar ao terminar “naturalmente”
+  // Avançar ao terminar "naturalmente"
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
@@ -126,6 +160,7 @@ export function VideoPlayer({
     const handleEnded = () => {
       if (!endFiredRef.current) {
         endFiredRef.current = true;
+        console.log('📺 VideoPlayer: Vídeo terminou naturalmente');
         onVideoEnd();
       }
     };
@@ -141,8 +176,9 @@ export function VideoPlayer({
     setMuted(false);
     try {
       await el.play();
-    } catch {
-      // em último caso o usuário clica no botão play do navegador
+      console.log('🔊 VideoPlayer: Som ativado pelo usuário');
+    } catch (err) {
+      console.warn('⚠️ VideoPlayer: Erro ao ativar som');
     }
   };
 
@@ -171,11 +207,23 @@ export function VideoPlayer({
     const el = videoRef.current;
     if (!el) return;
     if (!document.fullscreenElement) {
-      await el.requestFullscreen().catch(() => { });
+      await el.requestFullscreen().catch(() => {});
     } else {
-      await document.exitFullscreen().catch(() => { });
+      await document.exitFullscreen().catch(() => {});
     }
   };
+
+  // Mensagem quando não há vídeo
+  if (!video) {
+    return (
+      <div className="aspect-video bg-gradient-to-br from-purple-900 to-pink-900 rounded-xl flex items-center justify-center">
+        <div className="text-center text-white">
+          <p className="text-2xl mb-2">📺</p>
+          <p className="text-lg">Aguardando programação...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.div className="relative w-full overflow-hidden rounded-xl">
@@ -185,21 +233,22 @@ export function VideoPlayer({
         controls={false}
         playsInline
         crossOrigin="anonymous"
-        // autoplay é controlado via effect; manter atributo ajuda em alguns browsers
-        autoPlay
       />
+      
       {/* Overlay para destravar som no primeiro clique */}
       {ready && muted && !userInteracted && (
         <button
           onClick={handleUserInteract}
-          className="absolute inset-0 grid place-items-center bg-black/40 text-white text-sm"
+          className="absolute inset-0 grid place-items-center bg-black/40 text-white text-sm hover:bg-black/50 transition-colors"
           aria-label="Toque para ativar o som"
         >
-          <span className="px-3 py-2 bg-white/10 rounded-lg">Toque para ativar o som</span>
+          <span className="px-4 py-3 bg-white/10 rounded-lg backdrop-blur-sm border border-white/20">
+            🔊 Toque para ativar o som
+          </span>
         </button>
       )}
 
-      {/* === NOVO: overlay de bloqueio por limite diário === */}
+      {/* Overlay de bloqueio por limite diário */}
       {blocked && (
         <div className="absolute inset-0 grid place-items-center bg-black/50">
           <div className="rounded-xl bg-white/95 px-4 py-2 text-center shadow">
@@ -212,33 +261,36 @@ export function VideoPlayer({
       )}
 
       {/* Barra de controles simples */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/70 to-transparent"
-      >
-        <div className="flex items-center gap-3 text-white">
-          <button onClick={toggleMute} aria-label={muted ? 'Ativar som' : 'Mutar'}>
-            {muted ? <VolumeX size={22} /> : <Volume2 size={22} />}
-          </button>
-
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={handleVolumeChange}
-            className="w-36 h-1 bg-white/30 rounded-lg appearance-none cursor-pointer accent-white"
-          />
-
-          <div className="ml-auto">
-            <button onClick={toggleFullscreen} aria-label="Tela cheia">
-              <Maximize2 size={22} />
+      {ready && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/70 to-transparent"
+        >
+          <div className="flex items-center gap-3 text-white">
+            <button onClick={toggleMute} aria-label={muted ? 'Ativar som' : 'Mutar'}>
+              {muted ? <VolumeX size={22} /> : <Volume2 size={22} />}
             </button>
+
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={volume}
+              onChange={handleVolumeChange}
+              className="w-36 h-1 bg-white/30 rounded-lg appearance-none cursor-pointer accent-white"
+            />
+
+            <div className="ml-auto">
+              <button onClick={toggleFullscreen} aria-label="Tela cheia">
+                <Maximize2 size={22} />
+              </button>
+            </div>
           </div>
-        </div>
-      </motion.div>
+        </motion.div>
+      )}
     </motion.div>
   );
 }
+

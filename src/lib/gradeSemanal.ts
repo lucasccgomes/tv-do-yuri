@@ -109,7 +109,7 @@ export const weeklySchedule: Record<number, ScheduledProgram[]> = {
     { time: '14:23:00', videoId: 'edu-bellinha-respeito-001' },
     { time: '14:30:00', videoId: 'osvegetais-004' },
     { time: '15:09:00', videoId: 'bluey-037' },
-    { time: '15:17:00', videoId: 'edu-bita-diferenca-001' },
+    { time: '16:20:00', videoId: 'edu-bita-diferenca-001' },
     
     // Noite
     { time: '17:00:00', videoId: 'bluey-038' },
@@ -214,7 +214,7 @@ export const weeklySchedule: Record<number, ScheduledProgram[]> = {
     { time: '14:23:00', videoId: 'edu-bellinha-respeito-001' },
     { time: '14:30:00', videoId: 'osvegetais-004' },
     { time: '15:09:00', videoId: 'bluey-026' },
-    { time: '15:17:00', videoId: 'edu-bita-003' },
+    { time: '16:20:00', videoId: 'edu-bita-003' },
     
     // Noite
     { time: '17:00:00', videoId: 'bluey-027' },
@@ -372,7 +372,7 @@ export const weeklySchedule: Record<number, ScheduledProgram[]> = {
     { time: '14:23:00', videoId: 'edu-bellinha-respeito-001' },
     { time: '14:30:00', videoId: 'osvegetais-004' },
     { time: '15:09:00', videoId: 'bluey-035' },
-    { time: '15:17:00', videoId: 'edu-bita-003' },
+    { time: '16:20:00', videoId: 'edu-bita-003' },
     
     // Noite
     { time: '17:00:00', videoId: 'bluey-036' },
