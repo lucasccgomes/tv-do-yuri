@@ -169,7 +169,7 @@ export default function Home() {
                 onProgress={tv.reportVideoProgress}
                 segmentStartAt={tv.segmentStartAt}
                 segmentEndAt={tv.segmentEndAt}
-                onVideoEnd={() => { }} // Não precisa mais, a lógica é automática
+                onVideoEnd={() => {}} // Não precisa mais, a lógica é automática
                 blocked={tv.dailyLimitReached}
               />
             )}
@@ -207,8 +207,8 @@ export default function Home() {
                       {tv.currentVideo.category === 'cartoon'
                         ? '🎬 Desenho'
                         : tv.currentVideo.category === 'educational_clip'
-                          ? '📚 Educativo'
-                          : '📢 Comercial'}
+                        ? '📚 Educativo'
+                        : '📢 Comercial'}
                     </p>
                   </div>
                 </div>

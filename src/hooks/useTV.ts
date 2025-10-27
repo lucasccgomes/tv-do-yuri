@@ -12,15 +12,15 @@ import {
 
 export interface UseTVState {
   currentVideo: Video | null;
-  currentVideoProgress: number; // progresso atual (s)
+  currentVideoProgress: number;
   isPlaying: boolean;
   dailyLimitReached: boolean;
-  segmentStartAt?: number; // início do segmento atual (s)
-  segmentEndAt?: number; // fim do segmento atual (s)
-  currentProgram: ScheduledProgram | null; // programa atual da grade
-  nextProgram: ScheduledProgram | null; // próximo programa
-  todaySchedule: ScheduledProgram[]; // grade completa do dia
-  isOffAir: boolean; // se está fora do ar
+  segmentStartAt?: number;
+  segmentEndAt?: number;
+  currentProgram: ScheduledProgram | null;
+  nextProgram: ScheduledProgram | null;
+  todaySchedule: ScheduledProgram[];
+  isOffAir: boolean;
 }
 
 export interface UseTVActions {
@@ -32,6 +32,7 @@ export interface UseTVActions {
 
 /**
  * Função auxiliar para encontrar o programa atual com base no horário
+ * CORREÇÃO: Agora pula programas que já terminaram
  */
 function getCurrentProgram(now: Date): {
   program: ScheduledProgram | null;
@@ -46,7 +47,7 @@ function getCurrentProgram(now: Date): {
 
   const currentTimeInSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 
-  // Encontra o último programa que já começou
+  // Encontra o último programa que já começou E ainda não terminou
   let currentProgram: ScheduledProgram | null = null;
   let programStartTimeInSeconds = 0;
 
@@ -56,8 +57,21 @@ function getCurrentProgram(now: Date): {
     const programTime = h * 3600 + m * 60 + s;
 
     if (programTime <= currentTimeInSeconds) {
-      currentProgram = program;
-      programStartTimeInSeconds = programTime;
+      // Verifica se o programa ainda está no ar
+      const videoData = allVideos.find((v) => v.id === program.videoId);
+      if (videoData) {
+        const blockStartAt = program.startAt || 0;
+        const blockEndAt = program.endAt || videoData.duration;
+        const programDuration = blockEndAt - blockStartAt;
+        const programEndTime = programTime + programDuration;
+
+        // Se o programa ainda não terminou, é o atual
+        if (currentTimeInSeconds < programEndTime) {
+          currentProgram = program;
+          programStartTimeInSeconds = programTime;
+        }
+        // Se terminou, continua procurando o próximo
+      }
     } else {
       break; // Já passou dos programas que começaram
     }
@@ -95,7 +109,7 @@ export function useTV(): UseTVState & UseTVActions {
   const lastUiUpdateRef = useRef(0);
   const lastCountedSecondRef = useRef(0);
   const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastProgramIdRef = useRef<string | null>(null); // NOVO: rastreia mudança de programa
+  const lastProgramIdRef = useRef<string | null>(null);
 
   /**
    * Atualiza o programa atual baseado no horário
@@ -110,6 +124,7 @@ export function useTV(): UseTVState & UseTVActions {
 
     if (!program) {
       // Fora do ar
+      console.log('🚫 useTV: Fora do ar');
       setIsOffAir(true);
       setCurrentVideo(null);
       setCurrentProgram(null);
@@ -125,7 +140,7 @@ export function useTV(): UseTVState & UseTVActions {
     const videoData = allVideos.find((v) => v.id === program.videoId);
 
     if (!videoData) {
-      console.error(`Vídeo não encontrado: ${program.videoId}`);
+      console.error(`❌ useTV: Vídeo não encontrado: ${program.videoId}`);
       return;
     }
 
@@ -133,27 +148,21 @@ export function useTV(): UseTVState & UseTVActions {
     const blockStartAt = program.startAt || 0;
     const blockEndAt = program.endAt || videoData.duration;
 
-    // Calcula onde o vídeo deveria estar agora (tempo decorrido + início do bloco)
+    // Calcula onde o vídeo deveria estar agora
     const currentPosition = blockStartAt + elapsedSeconds;
 
-    // Se já passou do fim do bloco, não toca (aguarda próximo programa)
-    if (currentPosition >= blockEndAt) {
-      // Programa já terminou, aguarda atualização para o próximo
-      return;
-    }
-
-    // CORREÇÃO: Cria um ID único para o programa (videoId + startAt + endAt)
+    // Cria um ID único para o programa
     const programId = `${program.videoId}-${blockStartAt}-${blockEndAt}`;
     const programChanged = lastProgramIdRef.current !== programId;
 
     if (programChanged) {
-      console.log('🎬 Mudando para:', program.title || videoData.title, 'às', currentPosition, 'segundos');
+      console.log('🎬 useTV: Mudando para:', program.title || videoData.title, 'em', currentPosition, 's');
       
       lastProgramIdRef.current = programId;
       setCurrentVideo(videoData);
       setSegmentStartAt(blockStartAt);
       setSegmentEndAt(blockEndAt);
-      setCurrentVideoProgress(currentPosition); // IMPORTANTE: Define o tempo inicial
+      setCurrentVideoProgress(currentPosition);
       lastCountedSecondRef.current = Math.floor(currentPosition);
 
       // Verifica limite diário
@@ -167,7 +176,7 @@ export function useTV(): UseTVState & UseTVActions {
         setIsPlaying(true);
       }
     }
-  }, []); // CORREÇÃO: Remove dependências para evitar loops
+  }, []);
 
   /**
    * Inicializa e mantém a atualização periódica
@@ -176,10 +185,10 @@ export function useTV(): UseTVState & UseTVActions {
     // Primeira atualização imediata
     updateCurrentProgram();
 
-    // Atualiza a cada 5 segundos para verificar mudanças de programa (reduzido de 10s)
+    // Atualiza a cada 3 segundos (reduzido para detectar mudanças mais rápido)
     updateIntervalRef.current = setInterval(() => {
       updateCurrentProgram();
-    }, 5000);
+    }, 3000);
 
     return () => {
       if (updateIntervalRef.current) {
@@ -208,8 +217,7 @@ export function useTV(): UseTVState & UseTVActions {
   }, []);
 
   const restart = useCallback(() => {
-    // Força atualização imediata
-    lastProgramIdRef.current = null; // Força recarga do programa atual
+    lastProgramIdRef.current = null;
     updateCurrentProgram();
     setIsPlaying(true);
   }, [updateCurrentProgram]);
@@ -224,26 +232,21 @@ export function useTV(): UseTVState & UseTVActions {
       const start = segmentStartAt ?? 0;
       const end = segmentEndAt ?? currentVideo.duration;
 
-      // Clamp dentro do segmento
       const clamped = Math.min(Math.max(time, start), end);
 
-      // Throttling de UI: atualiza no máx 1x/seg
       const now = performance.now();
       if (now - lastUiUpdateRef.current >= 1000) {
         setCurrentVideoProgress(clamped);
         lastUiUpdateRef.current = now;
       }
 
-      // Contagem de tempo assistido, 1s por segundo (sem duplicar)
       const sec = Math.floor(clamped);
       if (isPlaying && sec > lastCountedSecondRef.current) {
         const delta = sec - lastCountedSecondRef.current;
         if (delta > 0 && delta < 10) {
-          // Sanity check: não conta saltos grandes
           addViewingTime(currentVideo.id, delta);
           lastCountedSecondRef.current = sec;
 
-          // Checa limite diário
           const s = settingsRef.current;
           if (isDailyLimitReached() && s.enabledParentalControls) {
             setDailyLimitReachedState(true);
@@ -252,10 +255,10 @@ export function useTV(): UseTVState & UseTVActions {
         }
       }
 
-      // Quando atingir o fim do segmento, força atualização para próximo programa
+      // Quando atingir o fim do segmento, força atualização
       if (clamped >= end - 0.5) {
-        console.log('📺 Fim do segmento, avançando para próximo programa...');
-        lastProgramIdRef.current = null; // Força recarga
+        console.log('📺 useTV: Fim do segmento, atualizando...');
+        lastProgramIdRef.current = null;
         updateCurrentProgram();
       }
     },
@@ -263,7 +266,6 @@ export function useTV(): UseTVState & UseTVActions {
   );
 
   return {
-    // State
     currentVideo,
     currentVideoProgress,
     isPlaying,
@@ -274,8 +276,6 @@ export function useTV(): UseTVState & UseTVActions {
     nextProgram,
     todaySchedule,
     isOffAir,
-
-    // Actions
     play,
     pause,
     restart,
