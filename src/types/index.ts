@@ -1,4 +1,4 @@
-export type VideoCategory = 'cartoon' | 'educational_clip' | 'commercial';
+export type VideoCategory = 'cartoon' | 'educational_clip' | 'commercial' | 'movie'; // 'movie' adicionado
 
 export type SkillCategory = 
   | 'language'
@@ -54,9 +54,20 @@ export interface AppSettings {
   interstitialDurationSeconds: number; // ex.: 60–90 (opcional)
 }
 
+export interface ProgrammingContext {
+  lastCategory: VideoCategory | null;
+  consecutiveSameShow: number;
+  lastShowId: string | null;
+  usedToday: Set<string>;
+  showMinutesToday: Record<string, number>;
+  currentVideo: Video; // Adicionado
+  allVideos: Video[]; // Adicionado
+  playlist: PlaylistItem[]; // Adicionado
+  currentIndex: number; // Adicionado
+}
+
 export interface DailyUsageStats {
   date: string; // YYYY-MM-DD
   totalMinutesWatched: number;
   videosWatched: string[]; // IDs dos vídeos assistidos
 }
-

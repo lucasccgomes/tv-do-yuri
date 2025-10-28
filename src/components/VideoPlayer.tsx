@@ -1,13 +1,16 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { Video } from '@/types';
-import { Volume2, VolumeX, Maximize2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+'use client';
 
-interface VideoPlayerProps {
-  video: Video | null;
+import { Video } from '@/types';
+import { motion } from 'framer-motion';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { addViewingTime, saveVideoProgress } from '@/lib/settingsManager';
+import { Clock, Loader2, Lock } from 'lucide-react';
+
+export interface VideoPlayerProps {
+  video: Video;
   isPlaying: boolean;
-  onVideoEnd: () => void;
   initialTime: number;
+  onEnded: () => void;
   onProgress: (time: number) => void;
   segmentStartAt?: number;
   segmentEndAt?: number;
@@ -17,18 +20,17 @@ interface VideoPlayerProps {
 export function VideoPlayer({
   video,
   isPlaying,
-  onVideoEnd,
+  onEnded,
   initialTime,
   onProgress,
-  segmentStartAt,
-  segmentEndAt,
+  segmentStartAt = 0,
+  segmentEndAt = video.duration,
   blocked = false,
 }: VideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const rafIdRef = useRef<number | null>(null);
-  const [muted, setMuted] = useState(true);
-  const [volume, setVolume] = useState(1);
-  const [userInteracted, setUserInteracted] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const animationRef = useRef<number>();
+  const lastTimeRef = useRef(0);
+  const lastTimeUpdateRef = useRef(0);
   const [ready, setReady] = useState(false);
   const endFiredRef = useRef(false);
   const lastVideoIdRef = useRef<string | null>(null); // NOVO: rastreia mudança de vídeo
@@ -38,53 +40,38 @@ export function VideoPlayer({
     const el = videoRef.current;
     if (!el || !video) {
       setReady(false);
-      return;
+      return () => {}; // Função de limpeza
     }
 
-    // Detecta se é um vídeo novo
     const isNewVideo = lastVideoIdRef.current !== video.id;
-    
+
     if (isNewVideo) {
-      console.log('🎬 VideoPlayer: Carregando novo vídeo:', video.title, 'em', initialTime, 'segundos');
+      setReady(false);
       lastVideoIdRef.current = video.id;
       endFiredRef.current = false;
-      setReady(false);
+      lastTimeRef.current = 0;
+      lastTimeUpdateRef.current = Date.now();
 
-      // Carrega nova mídia
       el.src = video.url;
-      el.preload = 'metadata';
-      el.muted = true; // necessário para autoplay
-      el.playsInline = true as any;
+      el.load();
 
-      const onLoaded = async () => {
-        console.log('📺 VideoPlayer: Metadata carregada, posicionando em', initialTime);
-        
-        // IMPORTANTE: Define o tempo inicial APÓS carregar metadata
-        const startTime = Math.max(segmentStartAt ?? 0, initialTime ?? 0);
-        el.currentTime = startTime;
-        
+      const onLoadedMetadata = () => {
+        el.currentTime = initialTime;
         setReady(true);
-
-        // Tenta dar play automaticamente
-        if (isPlaying && !blocked) {
-          try {
-            await el.play();
-            console.log('▶️ VideoPlayer: Reprodução iniciada');
-          } catch (err) {
-            console.warn('⚠️ VideoPlayer: Autoplay bloqueado, aguardando interação do usuário');
-          }
-        }
+        console.log('✅ VideoPlayer: Metadados carregados. Posicionando em:', initialTime);
       };
 
-      const onError = (e: Event) => {
-        console.error('❌ VideoPlayer: Erro ao carregar vídeo:', e);
+      const onError = () => {
+        console.error('❌ VideoPlayer: Erro ao carregar o vídeo:', video.url);
+        // Tenta avançar para o próximo programa
+        onEnded();
       };
 
-      el.addEventListener('loadedmetadata', onLoaded);
+      el.addEventListener('loadedmetadata', onLoadedMetadata);
       el.addEventListener('error', onError);
 
       return () => {
-        el.removeEventListener('loadedmetadata', onLoaded);
+        el.removeEventListener('loadedmetadata', onLoadedMetadata);
         el.removeEventListener('error', onError);
       };
     } else {
@@ -93,204 +80,121 @@ export function VideoPlayer({
         console.log('⏩ VideoPlayer: Ajustando posição para', initialTime);
         el.currentTime = initialTime;
       }
+      return () => {}; // Adicionado: Retorna a função de limpeza vazia
     }
   }, [video?.id, video?.url, initialTime, segmentStartAt, isPlaying, blocked, ready]);
+
 
   // Controla play/pause externo
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !ready || blocked) return;
-
-    (async () => {
+    if (el && ready && !blocked) {
       if (isPlaying) {
-        if (el.paused) {
-          try {
-            await el.play();
-            console.log('▶️ VideoPlayer: Play externo');
-          } catch (err) {
-            console.warn('⚠️ VideoPlayer: Play bloqueado');
-          }
-        }
+        el.play().catch(e => console.error('Erro ao tentar dar play:', e));
       } else {
-        if (!el.paused) {
-          el.pause();
-          console.log('⏸️ VideoPlayer: Pause externo');
-        }
+        el.pause();
       }
-    })();
+    }
   }, [isPlaying, ready, blocked]);
 
-  // Loop de progresso + corte por segmentEndAt
-  useEffect(() => {
+  // Função de loop para controle de tempo
+  const tick = useCallback(() => {
     const el = videoRef.current;
-    if (!el || !ready) return;
+    if (!el || !ready || blocked) return;
 
-    const tick = () => {
-      const t = el.currentTime || 0;
-      onProgress(t);
+    const now = Date.now();
+    const currentTime = el.currentTime;
 
-      // se houver segmentEndAt, corta ali e avança
-      if (
-        typeof segmentEndAt === 'number' &&
-        segmentEndAt > 0 &&
-        t >= segmentEndAt - 0.25 &&
-        !endFiredRef.current
-      ) {
-        endFiredRef.current = true;
-        el.pause();
-        console.log('📺 VideoPlayer: Fim do segmento atingido');
-        onVideoEnd();
-        return;
-      }
-      rafIdRef.current = requestAnimationFrame(tick);
-    };
-
-    rafIdRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    };
-  }, [ready, segmentEndAt, onProgress, onVideoEnd]);
-
-  // Avançar ao terminar "naturalmente"
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-
-    const handleEnded = () => {
-      if (!endFiredRef.current) {
-        endFiredRef.current = true;
-        console.log('📺 VideoPlayer: Vídeo terminou naturalmente');
-        onVideoEnd();
-      }
-    };
-    el.addEventListener('ended', handleEnded);
-    return () => el.removeEventListener('ended', handleEnded);
-  }, [onVideoEnd]);
-
-  const handleUserInteract = async () => {
-    setUserInteracted(true);
-    const el = videoRef.current;
-    if (!el) return;
-    el.muted = false;
-    setMuted(false);
-    try {
-      await el.play();
-      console.log('🔊 VideoPlayer: Som ativado pelo usuário');
-    } catch (err) {
-      console.warn('⚠️ VideoPlayer: Erro ao ativar som');
+    // 1. Controle de Fim de Segmento/Vídeo
+    if (currentTime >= segmentEndAt && !endFiredRef.current) {
+      console.log('🏁 Fim de segmento/vídeo atingido:', currentTime, '>=', segmentEndAt);
+      endFiredRef.current = true;
+      el.pause();
+      onEnded();
+      return;
     }
-  };
 
-  const toggleMute = () => {
-    const el = videoRef.current;
-    if (!el) return;
-    el.muted = !el.muted;
-    setMuted(el.muted);
-    if (!el.muted) setUserInteracted(true);
-  };
+    // 2. Controle de Progresso (para salvar)
+    // Salva o progresso a cada 1 segundo (ou se o vídeo mudou muito)
+    if (Math.abs(currentTime - lastTimeRef.current) >= 1 || now - lastTimeUpdateRef.current > 1000) {
+      onProgress(currentTime);
+      lastTimeRef.current = currentTime;
+      lastTimeUpdateRef.current = now;
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const el = videoRef.current;
-    if (!el) return;
-    const v = Number(e.target.value);
-    setVolume(v);
-    el.volume = v;
-    if (v > 0 && el.muted) {
-      el.muted = false;
-      setMuted(false);
-      setUserInteracted(true);
+      // Salva o progresso para retomada (se não for anúncio)
+      if (!video.id.startsWith('announcement-')) {
+        saveVideoProgress(video.id, currentTime);
+      }
+
+      // Acumula tempo assistido para limite diário
+      const deltaSeconds = (now - lastTimeUpdateRef.current) / 1000;
+      if (isPlaying && deltaSeconds > 0) {
+        addViewingTime(video.id, deltaSeconds);
+      }
     }
-  };
 
-  const toggleFullscreen = async () => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      await el.requestFullscreen().catch(() => {});
+    // 3. Controle de Início de Segmento
+    if (currentTime < segmentStartAt) {
+      console.log('⏪ VideoPlayer: Voltando para o início do segmento:', segmentStartAt);
+      el.currentTime = segmentStartAt;
+    }
+
+    // 4. Loop de Animação
+    animationRef.current = requestAnimationFrame(tick);
+  }, [ready, blocked, onEnded, onProgress, segmentEndAt, segmentStartAt, isPlaying, video.id]);
+
+  // Inicia/Para o loop de animação
+  useEffect(() => {
+    if (isPlaying && ready && !blocked) {
+      animationRef.current = requestAnimationFrame(tick);
     } else {
-      await document.exitFullscreen().catch(() => {});
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
     }
-  };
 
-  // Mensagem quando não há vídeo
-  if (!video) {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [isPlaying, ready, blocked, tick]);
+
+  if (blocked) {
     return (
-      <div className="aspect-video bg-gradient-to-br from-purple-900 to-pink-900 rounded-xl flex items-center justify-center">
-        <div className="text-center text-white">
-          <p className="text-2xl mb-2">📺</p>
-          <p className="text-lg">Aguardando programação...</p>
-        </div>
-      </div>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="w-full h-full bg-gray-900 flex flex-col items-center justify-center p-8"
+      >
+        <Lock className="w-12 h-12 text-red-500 mb-4" />
+        <h2 className="text-2xl font-bold mb-2">Conteúdo Bloqueado</h2>
+        <p className="text-gray-400 text-center">
+          O limite de tempo diário foi atingido ou o controle parental está ativo.
+        </p>
+      </motion.div>
     );
   }
 
   return (
-    <motion.div className="relative w-full overflow-hidden rounded-xl">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="relative w-full h-full bg-black flex items-center justify-center"
+    >
       <video
         ref={videoRef}
-        className="w-full h-auto bg-black rounded-xl"
-        controls={false}
+        className="w-full h-full object-contain"
         playsInline
-        crossOrigin="anonymous"
+        autoPlay={isPlaying}
+        muted={false} // Mantenha false para permitir o som
+        onContextMenu={(e) => e.preventDefault()} // Desabilita menu de contexto
       />
-      
-      {/* Overlay para destravar som no primeiro clique */}
-      {ready && muted && !userInteracted && (
-        <button
-          onClick={handleUserInteract}
-          className="absolute inset-0 grid place-items-center bg-black/40 text-white text-sm hover:bg-black/50 transition-colors"
-          aria-label="Toque para ativar o som"
-        >
-          <span className="px-4 py-3 bg-white/10 rounded-lg backdrop-blur-sm border border-white/20">
-            🔊 Toque para ativar o som
-          </span>
-        </button>
-      )}
-
-      {/* Overlay de bloqueio por limite diário */}
-      {blocked && (
-        <div className="absolute inset-0 grid place-items-center bg-black/50">
-          <div className="rounded-xl bg-white/95 px-4 py-2 text-center shadow">
-            <p className="text-sm font-medium text-neutral-900">
-              Tempo de tela de hoje completo
-            </p>
-            <p className="text-xs text-neutral-600">Faça uma pausa e escolha uma atividade offline.</p>
-          </div>
+      {!ready && (
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+          <Loader2 className="w-10 h-10 text-purple-400 animate-spin" />
         </div>
-      )}
-
-      {/* Barra de controles simples */}
-      {ready && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/70 to-transparent"
-        >
-          <div className="flex items-center gap-3 text-white">
-            <button onClick={toggleMute} aria-label={muted ? 'Ativar som' : 'Mutar'}>
-              {muted ? <VolumeX size={22} /> : <Volume2 size={22} />}
-            </button>
-
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={volume}
-              onChange={handleVolumeChange}
-              className="w-36 h-1 bg-white/30 rounded-lg appearance-none cursor-pointer accent-white"
-            />
-
-            <div className="ml-auto">
-              <button onClick={toggleFullscreen} aria-label="Tela cheia">
-                <Maximize2 size={22} />
-              </button>
-            </div>
-          </div>
-        </motion.div>
       )}
     </motion.div>
   );
 }
-

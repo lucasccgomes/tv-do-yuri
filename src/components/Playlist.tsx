@@ -1,20 +1,49 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { ScheduledProgram } from '@/lib/gradeSemanal';
-import { allVideos } from '@/lib/mockData';
+import { ScheduledProgram } from '@/lib/scheduleGenerator';
 import { Clock, Play } from 'lucide-react';
+import { getCategoryLabel } from '@/lib/settingsManager';
+// A lista de vídeos deve ser passada via props ou obtida de um hook/context,
+// mas para o componente de playlist, podemos simplificar a lógica de duração
+// ou assumir que o `ScheduledProgram` tem a duração.
+// Como o `ScheduledProgram` tem `startAt` e `endAt`, usaremos isso.
 
-interface PlaylistProps {
-  schedule: ScheduledProgram[];
-  currentProgram: ScheduledProgram | null;
+export interface PlaylistProps {
+  programs: ScheduledProgram[];
+  currentIndex: number;
 }
+
+// Função auxiliar para formatar a duração de um programa em minutos
+const formatDuration = (program: ScheduledProgram): string => {
+  // Se o programa tiver endAt e startAt, calcula a duração do segmento.
+  // Caso contrário, usa a duração total do vídeo.
+  const durationInSeconds = program.endAt && program.startAt
+    ? program.endAt - program.startAt
+    : program.duration; // Assumindo que ScheduledProgram tem a propriedade duration
+
+  if (!durationInSeconds) return '—';
+
+  const durationInMinutes = Math.ceil(durationInSeconds / 60);
+  return `${durationInMinutes} min`;
+};
+
+// Função auxiliar para obter o status do programa com base no currentIndex
+const getProgramStatus = (index: number, currentIndex: number): 'past' | 'current' | 'future' => {
+  if (index === currentIndex) {
+    return 'current';
+  }
+  if (index < currentIndex) {
+    return 'past';
+  }
+  return 'future';
+};
 
 /**
  * Componente que exibe a grade de programação do dia
  */
-export function Playlist({ schedule, currentProgram }: PlaylistProps) {
-  if (!schedule || schedule.length === 0) {
+export function Playlist({ programs, currentIndex }: PlaylistProps) {
+  if (!programs || programs.length === 0) {
     return (
       <div className="card">
         <h2 className="text-white font-bold text-2xl mb-4 flex items-center gap-2">
@@ -28,51 +57,16 @@ export function Playlist({ schedule, currentProgram }: PlaylistProps) {
     );
   }
 
-  // Função para formatar duração em minutos
-  const formatDuration = (videoId: string, startAt?: number, endAt?: number): string => {
-    const video = allVideos.find((v) => v.id === videoId);
-    if (!video) return '—';
-
-    const start = startAt || 0;
-    const end = endAt || video.duration;
-    const durationInMinutes = Math.ceil((end - start) / 60);
-
-    return `${durationInMinutes} min`;
-  };
-
-  // Função para determinar se um programa já passou, está no ar ou ainda vai ao ar
-  const getProgramStatus = (programTime: string): 'past' | 'current' | 'future' => {
-    const now = new Date();
-    const [h, m, s] = programTime.split(':').map(Number);
-    const programDate = new Date(now);
-    programDate.setHours(h, m, s, 0);
-
-    const currentTimeInSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-    const programTimeInSeconds = h * 3600 + m * 60 + s;
-
-    if (currentProgram && programTime === currentProgram.time) {
-      return 'current';
-    }
-
-    if (programTimeInSeconds < currentTimeInSeconds) {
-      return 'past';
-    }
-
-    return 'future';
-  };
-
   return (
     <div className="card">
-      <h2 className="text-white font-bold text-2xl mb-6 flex items-center gap-2">
-        <span className="text-3xl">📋</span>
-        Grade de Programação de Hoje
+      <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+        📅 Programação de Hoje
       </h2>
 
       <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-purple-500 scrollbar-track-purple-900/20">
-        {schedule.map((program, index) => {
-          const status = getProgramStatus(program.time);
-          const video = allVideos.find((v) => v.id === program.videoId);
-          const isCurrentProgram = currentProgram?.time === program.time;
+        {programs.map((program, index) => {
+          const status = getProgramStatus(index, currentIndex);
+          const isCurrentProgram = status === 'current';
 
           return (
             <motion.div
@@ -130,7 +124,7 @@ export function Playlist({ schedule, currentProgram }: PlaylistProps) {
                     ${isCurrentProgram ? 'text-white' : 'text-purple-100'}
                   `}
                   >
-                    {program.title || video?.title || 'Programa'}
+                    {program.title || program.videoId}
                   </h3>
 
                   <div className="flex items-center gap-3 text-sm">
@@ -139,24 +133,22 @@ export function Playlist({ schedule, currentProgram }: PlaylistProps) {
                       className={`
                       px-2 py-1 rounded-md font-semibold
                       ${
-                        video?.category === 'cartoon'
+                        program.category === 'cartoon'
                           ? 'bg-blue-500/20 text-blue-300'
-                          : video?.category === 'educational_clip'
+                          : program.category === 'educational_clip'
                           ? 'bg-green-500/20 text-green-300'
-                          : 'bg-orange-500/20 text-orange-300'
+                          : program.category === 'commercial'
+                          ? 'bg-orange-500/20 text-orange-300'
+                          : 'bg-red-500/20 text-red-300' // Para 'movie' e outros
                       }
                     `}
                     >
-                      {video?.category === 'cartoon'
-                        ? '🎬 Desenho'
-                        : video?.category === 'educational_clip'
-                        ? '📚 Educativo'
-                        : '📢 Comercial'}
+                      {getCategoryLabel(program.category as any)}
                     </span>
 
                     {/* Duração */}
                     <span className="text-purple-300">
-                      {formatDuration(program.videoId, program.startAt, program.endAt)}
+                      {formatDuration(program)}
                     </span>
 
                     {/* Indicador de bloco */}
@@ -168,17 +160,17 @@ export function Playlist({ schedule, currentProgram }: PlaylistProps) {
                   </div>
 
                   {/* Descrição (apenas para programa atual) */}
-                  {isCurrentProgram && video?.description && (
-                    <p className="text-purple-200 text-sm mt-2 line-clamp-2">{video.description}</p>
+                  {isCurrentProgram && program.description && (
+                    <p className="text-purple-200 text-sm mt-2 line-clamp-2">{program.description}</p>
                   )}
                 </div>
 
                 {/* Thumbnail (se disponível) */}
-                {video?.thumbnail && (
+                {program.thumbnail && (
                   <div className="flex-shrink-0 hidden sm:block">
                     <img
-                      src={video.thumbnail}
-                      alt={video.title}
+                      src={program.thumbnail}
+                      alt={program.title}
                       className="w-20 h-14 object-cover rounded-lg border border-white/20"
                     />
                   </div>
@@ -209,4 +201,3 @@ export function Playlist({ schedule, currentProgram }: PlaylistProps) {
     </div>
   );
 }
-

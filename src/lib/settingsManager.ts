@@ -235,6 +235,7 @@ export function getCategoryLabel(category: VideoCategory): string {
     cartoon: '🎬 Desenho',
     educational_clip: '📚 Clipe Educativo',
     commercial: '📢 Comercial Educativo',
+    movie: '🍿 Filme/Especial', // Adicionado
   };
 
   return labels[category];

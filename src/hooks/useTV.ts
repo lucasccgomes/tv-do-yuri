@@ -1,285 +1,325 @@
-'use client';
-
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Video } from '@/types';
-import { allVideos } from '@/lib/mockData';
-import { weeklySchedule, ScheduledProgram, getTodaySchedule, getNextProgram } from '@/lib/gradeSemanal';
-import {
-  getSettings,
-  isDailyLimitReached,
-  addViewingTime,
-} from '@/lib/settingsManager';
+import { loadAllVideosFromNextcloud } from '@/lib/nextcloudVideoLoader';
+import { generateWeekSchedule, ScheduledProgram } from '@/lib/scheduleGenerator';
+import { markEpisodeAsPlayed } from '@/lib/episodeTracker';
+import { getTodayMovieAnnouncements } from '@/lib/movieAnnouncements';
+import { BROADCAST_CONFIG } from '@/lib/programmingConfig';
+import { SCHEDULED_MOVIES } from '@/lib/programmingConfig';
 
-export interface UseTVState {
-  currentVideo: Video | null;
+interface TVState {
+  video: Video | null;
   currentVideoProgress: number;
-  isPlaying: boolean;
-  dailyLimitReached: boolean;
-  segmentStartAt?: number;
-  segmentEndAt?: number;
-  currentProgram: ScheduledProgram | null;
+  playlist: ScheduledProgram[];
+  currentProgramIndex: number;
+  isOnAir: boolean;
   nextProgram: ScheduledProgram | null;
-  todaySchedule: ScheduledProgram[];
-  isOffAir: boolean;
+  currentProgram: ScheduledProgram | null;
+  allVideos: Video[];
 }
 
-export interface UseTVActions {
-  play: () => void;
-  pause: () => void;
-  restart: () => void;
-  reportVideoProgress: (time: number) => void;
-}
+export function useTV() {
+  const [state, setState] = useState<TVState>({
+    allVideos: [],
+    video: null,
+    currentVideoProgress: 0,
+    playlist: [],
+    currentProgramIndex: -1,
+    isOnAir: false,
+    nextProgram: null,
+    currentProgram: null,
+  });
 
-/**
- * Função auxiliar para encontrar o programa atual com base no horário
- * CORREÇÃO: Agora pula programas que já terminaram
- */
-function getCurrentProgram(now: Date): {
-  program: ScheduledProgram | null;
-  elapsedSeconds: number;
-} {
-  const dayOfWeek = now.getDay();
-  const scheduleForToday = weeklySchedule[dayOfWeek];
+  const [weekSchedule, setWeekSchedule] = useState<Record<number, ScheduledProgram[]>>({});
 
-  if (!scheduleForToday || scheduleForToday.length === 0) {
-    return { program: null, elapsedSeconds: 0 };
-  }
-
-  const currentTimeInSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-
-  // Encontra o último programa que já começou E ainda não terminou
-  let currentProgram: ScheduledProgram | null = null;
-  let programStartTimeInSeconds = 0;
-
-  for (let i = 0; i < scheduleForToday.length; i++) {
-    const program = scheduleForToday[i];
-    const [h, m, s] = program.time.split(':').map(Number);
-    const programTime = h * 3600 + m * 60 + s;
-
-    if (programTime <= currentTimeInSeconds) {
-      // Verifica se o programa ainda está no ar
-      const videoData = allVideos.find((v) => v.id === program.videoId);
-      if (videoData) {
-        const blockStartAt = program.startAt || 0;
-        const blockEndAt = program.endAt || videoData.duration;
-        const programDuration = blockEndAt - blockStartAt;
-        const programEndTime = programTime + programDuration;
-
-        // Se o programa ainda não terminou, é o atual
-        if (currentTimeInSeconds < programEndTime) {
-          currentProgram = program;
-          programStartTimeInSeconds = programTime;
-        }
-        // Se terminou, continua procurando o próximo
-      }
-    } else {
-      break; // Já passou dos programas que começaram
-    }
-  }
-
-  if (!currentProgram) {
-    return { program: null, elapsedSeconds: 0 };
-  }
-
-  // Calcula quanto tempo passou desde o início do programa
-  const elapsedSeconds = currentTimeInSeconds - programStartTimeInSeconds;
-
-  return { program: currentProgram, elapsedSeconds };
-}
-
-/**
- * Hook principal para gerenciar a "TV ao vivo"
- */
-export function useTV(): UseTVState & UseTVActions {
-  const settingsRef = useRef(getSettings());
-
-  // Estados principais
-  const [currentVideo, setCurrentVideo] = useState<Video | null>(null);
-  const [currentVideoProgress, setCurrentVideoProgress] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [dailyLimitReachedState, setDailyLimitReachedState] = useState(false);
-  const [segmentStartAt, setSegmentStartAt] = useState<number | undefined>(undefined);
-  const [segmentEndAt, setSegmentEndAt] = useState<number | undefined>(undefined);
-  const [currentProgram, setCurrentProgram] = useState<ScheduledProgram | null>(null);
-  const [nextProgram, setNextProgram] = useState<ScheduledProgram | null>(null);
-  const [todaySchedule, setTodaySchedule] = useState<ScheduledProgram[]>([]);
-  const [isOffAir, setIsOffAir] = useState(false);
-
-  // Refs para otimização
-  const lastUiUpdateRef = useRef(0);
-  const lastCountedSecondRef = useRef(0);
-  const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastProgramIdRef = useRef<string | null>(null);
+  const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  /**
+   * Converte HH:MM:SS em segundos desde meia-noite
+   */
+  const timeToSeconds = useCallback((time: string): number => {
+    const [h, m, s] = time.split(':').map(Number);
+    return h * 3600 + m * 60 + s;
+  }, []);
+
+  /**
+   * Carrega vídeos e gera a grade da semana
+   */
+  const generateSchedule = useCallback(async () => {
+    console.log('🔄 Carregando vídeos e gerando grade semanal automática...');
+    
+    try {
+      // 1. Carrega vídeos do Nextcloud
+      const loadedVideos = await loadAllVideosFromNextcloud();
+      
+      setState(prev => ({
+        ...prev,
+        allVideos: loadedVideos,
+      }));
+      
+      // 2. Adiciona anúncios de filmes aos vídeos disponíveis
+      const movieAnnouncements = getTodayMovieAnnouncements(SCHEDULED_MOVIES);
+      const allAvailableVideos = [...loadedVideos, ...movieAnnouncements];
+      
+      // 3. Gera grade da semana
+      const schedule = generateWeekSchedule(allAvailableVideos);
+      setWeekSchedule(schedule);
+      
+      console.log('✅ Grade semanal gerada:', {
+        videosCarregados: loadedVideos.length,
+        anunciosGerados: movieAnnouncements.length,
+        totalProgramas: Object.values(schedule).reduce((acc, day) => acc + day.length, 0),
+      });
+    } catch (error) {
+      console.error('❌ Erro ao gerar grade:', error);
+    }
+  }, []);
+  
   /**
    * Atualiza o programa atual baseado no horário
    */
   const updateCurrentProgram = useCallback(() => {
     const now = new Date();
-    const { program, elapsedSeconds } = getCurrentProgram(now);
+    const dayOfWeek = now.getDay();
+    const currentTimeInSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
 
-    // Atualiza a grade do dia
-    setTodaySchedule(getTodaySchedule());
-    setNextProgram(getNextProgram(now));
+    console.log('🔄 Atualizando programa...');
+    console.log('📅 Dia da semana:', dayOfWeek, '(0=Dom, 1=Seg, etc)');
 
-    if (!program) {
-      // Fora do ar
-      console.log('🚫 useTV: Fora do ar');
-      setIsOffAir(true);
-      setCurrentVideo(null);
-      setCurrentProgram(null);
-      setIsPlaying(false);
-      lastProgramIdRef.current = null;
+    // Obtém programação do dia
+    const scheduleForToday = weekSchedule[dayOfWeek];
+
+    if (!scheduleForToday || scheduleForToday.length === 0) {
+      console.warn('⚠️ Nenhum programa agendado para hoje!');
+      setState(prev => ({
+        ...prev,
+        video: null,
+        isOnAir: false,
+        currentProgram: null,
+        nextProgram: null,
+        playlist: [],
+      }));
       return;
     }
 
-    setIsOffAir(false);
-    setCurrentProgram(program);
+    console.log('📋 Programas hoje:', scheduleForToday.length);
+    console.log('🕐 Horário atual:', `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`, `(${currentTimeInSeconds}s)`);
 
-    // Busca o vídeo correspondente
-    const videoData = allVideos.find((v) => v.id === program.videoId);
+    // Encontra o programa atual
+    let currentProgram: ScheduledProgram | null = null;
+    let programStartTimeInSeconds = 0;
+    let currentProgramIndex = -1;
 
+    for (let i = 0; i < scheduleForToday.length; i++) {
+      const program = scheduleForToday[i];
+      const programTime = timeToSeconds(program.time);
+      
+      // Busca o vídeo correspondente
+      const videoData = state.allVideos.find(v => v.id === program.videoId);
+      if (!videoData) {
+        console.warn(`⚠️ Vídeo não encontrado: ${program.videoId}`);
+        continue;
+      }
+
+      // Se o programa tiver endAt, usa a duração do bloco
+      const programDuration = program.endAt && program.startAt 
+        ? program.endAt - program.startAt
+        : videoData.duration;
+        
+      const programEndTime = programTime + programDuration;
+
+      // Se o programa ainda não terminou, é o atual
+      if (currentTimeInSeconds >= programTime && currentTimeInSeconds < programEndTime) {
+        currentProgram = program;
+        programStartTimeInSeconds = programTime;
+        currentProgramIndex = i;
+        break;
+      }
+    }
+
+    if (!currentProgram) {
+      console.log('🚫 FORA DO AR - Nenhum programa no momento');
+      setState(prev => ({
+        ...prev,
+        video: null,
+        isOnAir: false,
+        currentProgram: null,
+        nextProgram: null,
+        playlist: scheduleForToday,
+      }));
+      return;
+    }
+
+    console.log('✅ Programa atual encontrado:', currentProgram.videoId);
+
+    // Busca próximo programa
+    const nextProgram = currentProgramIndex >= 0 && currentProgramIndex < scheduleForToday.length - 1
+      ? scheduleForToday[currentProgramIndex + 1]
+      : null;
+
+    if (nextProgram) {
+      console.log('⏭️ Próximo programa:', nextProgram.videoId, 'às', nextProgram.time);
+    }
+
+    // Busca dados do vídeo
+    const videoData = state.allVideos.find(v => v.id === currentProgram.videoId);
     if (!videoData) {
-      console.error(`❌ useTV: Vídeo não encontrado: ${program.videoId}`);
+      console.error('❌ Vídeo não encontrado:', currentProgram.videoId);
       return;
     }
 
-    // Calcula o ponto de início e fim do segmento
-    const blockStartAt = program.startAt || 0;
-    const blockEndAt = program.endAt || videoData.duration;
+    console.log('✅ Vídeo encontrado:', videoData.title);
 
-    // Calcula onde o vídeo deveria estar agora
-    const currentPosition = blockStartAt + elapsedSeconds;
+    // Calcula tempo decorrido desde o início do programa
+    const elapsedSeconds = currentTimeInSeconds - programStartTimeInSeconds;
+    console.log('⏱️ Tempo decorrido:', elapsedSeconds, 'segundos');
 
-    // Cria um ID único para o programa
-    const programId = `${program.videoId}-${blockStartAt}-${blockEndAt}`;
+    // Define segmento (se houver startAt/endAt)
+    const blockStartAt = currentProgram.startAt || 0;
+    const blockEndAt = currentProgram.endAt || videoData.duration;
+
+    console.log('📐 Segmento:', blockStartAt, 'até', blockEndAt, 'segundos');
+
+    // Calcula posição no vídeo
+    const videoPosition = blockStartAt + elapsedSeconds;
+
+    console.log('📍 Posição calculada:', videoPosition, 'segundos');
+
+    // Verifica se o programa já terminou
+    if (videoPosition >= blockEndAt) {
+      console.log('⏭️ Programa já terminou, avançando para próximo...');
+      // Aguarda próximo programa
+      setState(prev => ({
+        ...prev,
+        video: null,
+        isOnAir: false,
+        currentProgram: null,
+        nextProgram,
+        playlist: scheduleForToday,
+      }));
+      return;
+    }
+
+    // Cria ID único do programa (inclui blocos)
+    const programId = `${currentProgram.videoId}-${blockStartAt}-${blockEndAt}`;
     const programChanged = lastProgramIdRef.current !== programId;
 
     if (programChanged) {
-      console.log('🎬 useTV: Mudando para:', program.title || videoData.title, 'em', currentPosition, 's');
-      
+      console.log('🎬 Mudando para:', videoData.title, 'em', videoPosition, 's');
       lastProgramIdRef.current = programId;
-      setCurrentVideo(videoData);
-      setSegmentStartAt(blockStartAt);
-      setSegmentEndAt(blockEndAt);
-      setCurrentVideoProgress(currentPosition);
-      lastCountedSecondRef.current = Math.floor(currentPosition);
 
-      // Verifica limite diário
-      const s = settingsRef.current;
-      const reached = isDailyLimitReached();
-      setDailyLimitReachedState(reached);
-
-      if (reached && s.enabledParentalControls) {
-        setIsPlaying(false);
-      } else {
-        setIsPlaying(true);
+      // Marca episódio como assistido (se não for um anúncio)
+      if (!currentProgram.videoId.startsWith('announcement-')) {
+        markEpisodeAsPlayed(currentProgram.videoId, Math.ceil(videoData.duration / 60));
       }
+
+      setState(prev => ({
+        ...prev,
+        video: videoData,
+        currentVideoProgress: videoPosition,
+        playlist: scheduleForToday,
+        currentProgramIndex: currentProgramIndex,
+        isOnAir: true,
+        nextProgram,
+        currentProgram,
+      }));
+    } else {
+      // Apenas atualiza o progresso
+      setState(prev => ({
+        ...prev,
+        currentVideoProgress: videoPosition,
+      }));
     }
+  }, [weekSchedule, timeToSeconds, state.allVideos]);
+
+  /**
+   * Verifica se está no horário de transmissão
+   */
+  const isInBroadcastTime = useCallback((): boolean => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+
+    const [startH, startM] = BROADCAST_CONFIG.startTime.split(':').map(Number);
+    const [endH, endM] = BROADCAST_CONFIG.endTime.split(':').map(Number);
+
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+
+    return currentTimeMinutes >= startMinutes && currentTimeMinutes < endMinutes;
   }, []);
 
   /**
-   * Inicializa e mantém a atualização periódica
+   * Reinicia a programação (útil após mudanças)
    */
-  useEffect(() => {
-    // Primeira atualização imediata
-    updateCurrentProgram();
+  const restart = useCallback(() => {
+    console.log('🔄 Reiniciando programação...');
+    lastProgramIdRef.current = null;
+    generateSchedule();
+  }, [generateSchedule]);
 
-    // Atualiza a cada 3 segundos (reduzido para detectar mudanças mais rápido)
-    updateIntervalRef.current = setInterval(() => {
+  /**
+   * Força atualização do programa atual
+   */
+  const forceUpdate = useCallback(() => {
+    updateCurrentProgram();
+  }, [updateCurrentProgram]);
+
+  // Gera grade ao montar
+  useEffect(() => {
+    console.log('🚀 useTV: Inicializando...');
+    generateSchedule();
+  }, [generateSchedule]);
+
+  // Atualiza programa quando a grade estiver pronta
+  useEffect(() => {
+    if (Object.keys(weekSchedule).length > 0) {
+      console.log('📺 Grade carregada, atualizando programa...');
       updateCurrentProgram();
-    }, 3000);
+    }
+  }, [weekSchedule, updateCurrentProgram]);
+
+  // Intervalo de atualização
+  useEffect(() => {
+    if (Object.keys(weekSchedule).length === 0) return;
+
+    console.log('⏰ Iniciando verificação periódica (5s)...');
+
+    updateIntervalRef.current = setInterval(() => {
+      console.log('⏰ Verificação periódica...');
+      
+      if (!isInBroadcastTime()) {
+        console.log('🌙 Fora do horário de transmissão');
+        setState(prev => ({
+          ...prev,
+          video: null,
+          isOnAir: false,
+        }));
+        return;
+      }
+
+      updateCurrentProgram();
+    }, 5000); // A cada 5 segundos
 
     return () => {
       if (updateIntervalRef.current) {
         clearInterval(updateIntervalRef.current);
       }
     };
-  }, [updateCurrentProgram]);
-
-  /**
-   * Controles de reprodução
-   */
-  const play = useCallback(() => {
-    const s = settingsRef.current;
-    const reached = isDailyLimitReached();
-    if (reached && s.enabledParentalControls) {
-      setDailyLimitReachedState(true);
-      setIsPlaying(false);
-      return;
-    }
-    setDailyLimitReachedState(false);
-    setIsPlaying(true);
-  }, []);
-
-  const pause = useCallback(() => {
-    setIsPlaying(false);
-  }, []);
-
-  const restart = useCallback(() => {
-    lastProgramIdRef.current = null;
-    updateCurrentProgram();
-    setIsPlaying(true);
-  }, [updateCurrentProgram]);
-
-  /**
-   * Recebe atualizações de progresso do VideoPlayer
-   */
-  const reportVideoProgress = useCallback(
-    (time: number) => {
-      if (!currentVideo) return;
-
-      const start = segmentStartAt ?? 0;
-      const end = segmentEndAt ?? currentVideo.duration;
-
-      const clamped = Math.min(Math.max(time, start), end);
-
-      const now = performance.now();
-      if (now - lastUiUpdateRef.current >= 1000) {
-        setCurrentVideoProgress(clamped);
-        lastUiUpdateRef.current = now;
-      }
-
-      const sec = Math.floor(clamped);
-      if (isPlaying && sec > lastCountedSecondRef.current) {
-        const delta = sec - lastCountedSecondRef.current;
-        if (delta > 0 && delta < 10) {
-          addViewingTime(currentVideo.id, delta);
-          lastCountedSecondRef.current = sec;
-
-          const s = settingsRef.current;
-          if (isDailyLimitReached() && s.enabledParentalControls) {
-            setDailyLimitReachedState(true);
-            setIsPlaying(false);
-          }
-        }
-      }
-
-      // Quando atingir o fim do segmento, força atualização
-      if (clamped >= end - 0.5) {
-        console.log('📺 useTV: Fim do segmento, atualizando...');
-        lastProgramIdRef.current = null;
-        updateCurrentProgram();
-      }
-    },
-    [currentVideo, segmentStartAt, segmentEndAt, isPlaying, updateCurrentProgram]
-  );
+  }, [weekSchedule, updateCurrentProgram, isInBroadcastTime]);
 
   return {
-    currentVideo,
-    currentVideoProgress,
-    isPlaying,
-    dailyLimitReached: dailyLimitReachedState,
-    segmentStartAt,
-    segmentEndAt,
-    currentProgram,
-    nextProgram,
-    todaySchedule,
-    isOffAir,
-    play,
-    pause,
+    video: state.video,
+    currentVideoProgress: state.currentVideoProgress,
+    playlist: state.playlist,
+    currentProgramIndex: state.currentProgramIndex,
+    isOnAir: state.isOnAir,
+    nextProgram: state.nextProgram,
+    currentProgram: state.currentProgram,
     restart,
-    reportVideoProgress,
+    forceUpdate,
+    isInBroadcastTime: isInBroadcastTime(),
   };
 }
-

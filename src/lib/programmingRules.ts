@@ -1,4 +1,5 @@
 import { Video, PlaylistItem, ProgrammingContext } from '@/types';
+import { extractShowId } from './episodeTracker';
 
 /**
  * Regra 1: Após um episódio de desenho, intercalar 2 comerciais educativos
@@ -138,6 +139,11 @@ export function generateInitialPlaylist(allVideos: Video[], length: number = 20)
       allVideos,
       playlist,
       currentIndex: playlist.length - 1,
+      lastCategory: currentVideo.category,
+      consecutiveSameShow: 1,
+      lastShowId: extractShowId(currentVideo.id) || null,
+      usedToday: new Set(playlist.map(p => p.video.id)),
+      showMinutesToday: {}, // Não é usado aqui, mas é necessário para a interface
     };
 
     const nextVideo = getNextVideo(context);
@@ -170,4 +176,3 @@ export function generateInitialPlaylist(allVideos: Video[], length: number = 20)
 
   return playlist;
 }
-
