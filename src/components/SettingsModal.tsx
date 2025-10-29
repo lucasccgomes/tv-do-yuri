@@ -1,16 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Save, RotateCcw } from 'lucide-react';
-import { AppSettings, SkillCategory, VideoCategory } from '@/types';
+import type { AppSettings } from '@/types';
+import type { SkillCategory, VideoCategory } from '@/types';
 import {
   getSettings,
   saveSettings,
-  resetSettings,
+  // resetSettings, // removido
   getSkillLabel,
   getCategoryLabel,
-  getRemainingDailyTime,
 } from '@/lib/settingsManager';
 
 interface SettingsModalProps {
@@ -20,12 +20,7 @@ interface SettingsModalProps {
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<AppSettings>(getSettings());
-  const [remainingTime, setRemainingTime] = useState(getRemainingDailyTime());
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    setRemainingTime(getRemainingDailyTime());
-  }, [isOpen]);
 
   const handleSave = () => {
     setIsSaving(true);
@@ -37,9 +32,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const handleReset = () => {
-    if (confirm('Tem certeza que deseja resetar todas as configurações para os valores padrão?')) {
-      const defaultSettings = resetSettings();
-      setSettings(defaultSettings);
+    if (confirm('Tem certeza que deseja resetar as preferências (sem limites)?')) {
+      setSettings((prev) => ({
+        ...prev,
+        prioritizedSkills: [],
+        allowedCategories: ['cartoon', 'educational_clip', 'commercial'],
+        enabledParentalControls: false,
+        interruptLongVideos: false,
+        allowVideoResumption: true,
+      }));
     }
   };
 
@@ -103,81 +104,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
               {/* Content */}
               <div className="p-6 space-y-6">
-                {/* Tempo de Tela Diário */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-white/5 rounded-lg p-4 border border-white/10"
-                >
-                  <h3 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-                    <span className="text-2xl">⏱️</span>
-                    Limite de Tempo Diário
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-4">
-                      <input
-                        type="range"
-                        min="15"
-                        max="120"
-                        step="5"
-                        value={settings.dailyScreenTimeLimit}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            dailyScreenTimeLimit: parseInt(e.target.value),
-                          }))
-                        }
-                        className="flex-1 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="text-white font-bold text-lg min-w-[60px]">
-                        {settings.dailyScreenTimeLimit} min
-                      </span>
-                    </div>
-                    <p className="text-purple-200 text-sm">
-                      Tempo restante hoje: <span className="font-bold text-green-400">{remainingTime} minutos</span>
-                    </p>
-                    <p className="text-purple-200 text-xs">
-                      ⚠️ Recomendação: Máximo 60 minutos por dia (OMS/AAP para crianças de 3-4 anos)
-                    </p>
-                  </div>
-                </motion.div>
-
-                {/* Duração Máxima da Sessão */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-white/5 rounded-lg p-4 border border-white/10"
-                >
-                  <h3 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-                    <span className="text-2xl">📹</span>
-                    Duração Máxima da Sessão
-                  </h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-4">
-                      <input
-                        type="range"
-                        min="10"
-                        max="25"
-                        step="1"
-                        value={settings.maxSessionDuration}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            maxSessionDuration: parseInt(e.target.value),
-                          }))
-                        }
-                        className="flex-1 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer"
-                      />
-                      <span className="text-white font-bold text-lg min-w-[60px]">
-                        {settings.maxSessionDuration} min
-                      </span>
-                    </div>
-                    <p className="text-purple-200 text-xs">
-                      ⚠️ Recomendação: 15-20 minutos para respeitar a capacidade de atenção
-                    </p>
-                  </div>
-                </motion.div>
-
                 {/* Habilidades Priorizadas */}
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
@@ -241,85 +167,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     ))}
                   </div>
                 </motion.div>
-
-                {/* Controles Parentais */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-white/5 rounded-lg p-4 border border-white/10"
-                >
-                  <h3 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-                    <span className="text-2xl">🔒</span>
-                    Controles Parentais
-                  </h3>
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={settings.enabledParentalControls}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            enabledParentalControls: e.target.checked,
-                          }))
-                        }
-                        className="w-5 h-5 cursor-pointer"
-                      />
-                      <span className="text-purple-200">
-                        Ativar controles parentais (pausar ao atingir limite de tempo)
-                      </span>
-                    </label>
-                  </div>
-                </motion.div>
-
-                {/* Interrupcao e Retomada de Videos Longos */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-white/5 rounded-lg p-4 border border-white/10"
-                >
-                  <h3 className="text-white font-bold text-lg mb-4 flex items-center gap-2">
-                    <span className="text-2xl">🎬</span>
-                    Videos Longos
-                  </h3>
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={settings.interruptLongVideos}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            interruptLongVideos: e.target.checked,
-                          }))
-                        }
-                        className="w-5 h-5 cursor-pointer"
-                      />
-                      <span className="text-purple-200">
-                        Interromper videos que excedem a duracao maxima da sessao
-                      </span>
-                    </label>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={settings.allowVideoResumption}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            allowVideoResumption: e.target.checked,
-                          }))
-                        }
-                        className="w-5 h-5 cursor-pointer"
-                      />
-                      <span className="text-purple-200">
-                        Permitir retomar videos de onde pararam
-                      </span>
-                    </label>
-                    <p className="text-purple-200 text-xs">
-                      Quando ativado, videos longos serao automaticamente interrompidos ao atingir a duracao maxima da sessao e poderao ser retomados depois.
-                    </p>
-                  </div>
-                </motion.div>
               </div>
 
               {/* Footer */}
@@ -359,4 +206,3 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     </AnimatePresence>
   );
 }
-

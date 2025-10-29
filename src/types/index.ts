@@ -42,17 +42,23 @@ export interface PlaylistItem {
 }
 
 export interface AppSettings {
-  dailyScreenTimeLimit: number; // em minutos (padrão: 60)
-  maxSessionDuration: number; // em minutos (padrão: 15)
-  prioritizedSkills: SkillCategory[]; // Habilidades priorizadas
-  allowedCategories: VideoCategory[]; // Categorias de conteúdo permitidas
-  enabledParentalControls: boolean; // Se os controles parentais estão ativados
-  allowVideoResumption: boolean; // Permitir que vídeos longos sejam retomados de onde pararam
-  interruptLongVideos: boolean; // Interromper vídeos que excedem a duração máxima da sessão
-  maxContinuousPerShowMinutes: number; // ex.: 20 min por desenho no mesmo dia
-  interstitialEveryMinutes: number; // ex.: 8–10 (opcional)
-  interstitialDurationSeconds: number; // ex.: 60–90 (opcional)
+  autoplay?: boolean;
+  defaultVolume?: number;
+  prioritizedSkills: SkillCategory[];
+  allowedCategories: VideoCategory[];
+
+  // tornar opcionais:
+  dailyScreenTimeLimit?: number;
+  maxSessionDuration?: number;
+  maxContinuousPerShowMinutes?: number;
+  interstitialEveryMinutes?: number;
+  interstitialDurationSeconds?: number;
+
+  enabledParentalControls?: boolean;
+  interruptLongVideos?: boolean;
+  allowVideoResumption?: boolean;
 }
+
 
 export interface ProgrammingContext {
   lastCategory: VideoCategory | null;

@@ -4,7 +4,6 @@ import { loadAllVideosFromNextcloud } from '@/lib/nextcloudVideoLoader';
 import { generateWeekSchedule, ScheduledProgram } from '@/lib/scheduleGenerator';
 import { markEpisodeAsPlayed } from '@/lib/episodeTracker';
 import { getTodayMovieAnnouncements } from '@/lib/movieAnnouncements';
-import { BROADCAST_CONFIG } from '@/lib/programmingConfig';
 import { SCHEDULED_MOVIES } from '@/lib/programmingConfig';
 
 interface TVState {
@@ -33,7 +32,9 @@ export function useTV() {
   const [weekSchedule, setWeekSchedule] = useState<Record<number, ScheduledProgram[]>>({});
 
   const lastProgramIdRef = useRef<string | null>(null);
-  const updateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Fica compatível com browser e Node
+  const updateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
 
   /**
    * Converte HH:MM:SS em segundos desde meia-noite
@@ -48,24 +49,24 @@ export function useTV() {
    */
   const generateSchedule = useCallback(async () => {
     console.log('🔄 Carregando vídeos e gerando grade semanal automática...');
-    
+
     try {
       // 1. Carrega vídeos do Nextcloud
       const loadedVideos = await loadAllVideosFromNextcloud();
-      
+
       setState(prev => ({
         ...prev,
         allVideos: loadedVideos,
       }));
-      
+
       // 2. Adiciona anúncios de filmes aos vídeos disponíveis
       const movieAnnouncements = getTodayMovieAnnouncements(SCHEDULED_MOVIES);
       const allAvailableVideos = [...loadedVideos, ...movieAnnouncements];
-      
+
       // 3. Gera grade da semana
       const schedule = generateWeekSchedule(allAvailableVideos);
       setWeekSchedule(schedule);
-      
+
       console.log('✅ Grade semanal gerada:', {
         videosCarregados: loadedVideos.length,
         anunciosGerados: movieAnnouncements.length,
@@ -75,7 +76,7 @@ export function useTV() {
       console.error('❌ Erro ao gerar grade:', error);
     }
   }, []);
-  
+
   /**
    * Atualiza o programa atual baseado no horário
    */
@@ -114,7 +115,7 @@ export function useTV() {
     for (let i = 0; i < scheduleForToday.length; i++) {
       const program = scheduleForToday[i];
       const programTime = timeToSeconds(program.time);
-      
+
       // Busca o vídeo correspondente
       const videoData = state.allVideos.find(v => v.id === program.videoId);
       if (!videoData) {
@@ -123,10 +124,10 @@ export function useTV() {
       }
 
       // Se o programa tiver endAt, usa a duração do bloco
-      const programDuration = program.endAt && program.startAt 
+      const programDuration = program.endAt && program.startAt
         ? program.endAt - program.startAt
         : videoData.duration;
-        
+
       const programEndTime = programTime + programDuration;
 
       // Se o programa ainda não terminou, é o atual
@@ -236,20 +237,11 @@ export function useTV() {
   /**
    * Verifica se está no horário de transmissão
    */
+  // 🔓 Sempre no ar (sem limite de horário)
   const isInBroadcastTime = useCallback((): boolean => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTimeMinutes = currentHour * 60 + currentMinute;
-
-    const [startH, startM] = BROADCAST_CONFIG.startTime.split(':').map(Number);
-    const [endH, endM] = BROADCAST_CONFIG.endTime.split(':').map(Number);
-
-    const startMinutes = startH * 60 + startM;
-    const endMinutes = endH * 60 + endM;
-
-    return currentTimeMinutes >= startMinutes && currentTimeMinutes < endMinutes;
+    return true;
   }, []);
+
 
   /**
    * Reinicia a programação (útil após mudanças)
@@ -282,33 +274,27 @@ export function useTV() {
   }, [weekSchedule, updateCurrentProgram]);
 
   // Intervalo de atualização
+  // Intervalo de atualização
   useEffect(() => {
     if (Object.keys(weekSchedule).length === 0) return;
 
     console.log('⏰ Iniciando verificação periódica (5s)...');
 
     updateIntervalRef.current = setInterval(() => {
-      console.log('⏰ Verificação periódica...');
-      
-      if (!isInBroadcastTime()) {
-        console.log('🌙 Fora do horário de transmissão');
-        setState(prev => ({
-          ...prev,
-          video: null,
-          isOnAir: false,
-        }));
-        return;
-      }
-
+      console.log('⏰ Verificação periódica (sempre no ar)...');
+      // 🔓 Sem checar horário — sempre atualiza
       updateCurrentProgram();
-    }, 5000); // A cada 5 segundos
+    }, 5000);
 
+    // cleanup correto: fora do setInterval
     return () => {
       if (updateIntervalRef.current) {
         clearInterval(updateIntervalRef.current);
+        updateIntervalRef.current = null;
       }
     };
-  }, [weekSchedule, updateCurrentProgram, isInBroadcastTime]);
+  }, [weekSchedule, updateCurrentProgram]); // <-- deps do effect (sem passar para o setInterval)
+
 
   return {
     video: state.video,
