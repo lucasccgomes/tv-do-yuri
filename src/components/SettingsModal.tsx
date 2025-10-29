@@ -63,7 +63,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const skillOptions: SkillCategory[] = ['language', 'motor_skills', 'cognitive', 'socioemotional', 'creativity'];
-  const categoryOptions: VideoCategory[] = ['cartoon', 'educational_clip', 'commercial'];
+  const categoryOptions: VideoCategory[] = ['cartoon', 'educational_clip', 'commercial', 'movie'];
+
 
   return (
     <AnimatePresence>
