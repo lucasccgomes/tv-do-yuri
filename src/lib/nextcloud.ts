@@ -1,10 +1,7 @@
 // src/lib/nextcloud.ts
 export function getWebdavFileUrl(filePath: string) {
-  // WebDAV raiz: /remote.php/dav/files/<username>/
   const base = process.env.NEXTCLOUD_BASE_URL!;
   const user = process.env.NEXTCLOUD_USERNAME!;
-  // caminho sempre absoluto a partir do diretório raiz do usuário
-  // filePath deve vir tipo: /Videos/tv-do-yuri/videos/...
   const norm = filePath.startsWith('/') ? filePath : `/${filePath}`;
   return `${base}/remote.php/dav/files/${encodeURIComponent(user)}${norm}`;
 }
