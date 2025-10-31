@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { saveVideoProgress } from '@/lib/settingsManager';
 import { Loader2 } from 'lucide-react';
+import { getVideoSrc } from '@/lib/videoUrl';
+
 
 export interface VideoPlayerProps {
   video: Video;
@@ -38,7 +40,7 @@ export function VideoPlayer({
     const el = videoRef.current;
     if (!el || !video) {
       setReady(false);
-      return () => {};
+      return () => { };
     }
 
     const isNewVideo = lastVideoIdRef.current !== video.id;
@@ -76,7 +78,7 @@ export function VideoPlayer({
         console.log('⏩ VideoPlayer: Ajustando posição para', initialTime);
         el.currentTime = initialTime;
       }
-      return () => {};
+      return () => { };
     }
   }, [video?.id, video?.url, initialTime, segmentStartAt, isPlaying, ready]);
 
@@ -156,12 +158,27 @@ export function VideoPlayer({
     >
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        src={src}
+        controls
+        autoPlay
         playsInline
-        autoPlay={isPlaying}
-        muted={false}
-        onContextMenu={(e) => e.preventDefault()}
+        // muted={false} // se quiser iniciar com áudio
+        onLoadedMetadata={(e) => {
+          console.log('[player] loadedmetadata', { duration: (e.target as HTMLVideoElement).duration, src });
+        }}
+        onCanPlay={() => console.log('[player] canplay', { src })}
+        onPlaying={() => console.log('[player] playing', { src })}
+        onPause={() => console.log('[player] pause', { src })}
+        onWaiting={() => console.log('[player] waiting', { src })}
+        onStalled={() => console.log('[player] stalled', { src })}
+        onError={(e) => {
+          const el = e.target as HTMLVideoElement;
+          const err = el.error;
+          console.error('[player] error', { code: err?.code, message: err?.message, src });
+        }}
+        className="w-full h-auto rounded-xl bg-black"
       />
+
       {!ready && (
         <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
           <Loader2 className="w-10 h-10 animate-spin" />
